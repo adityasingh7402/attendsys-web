@@ -9,6 +9,7 @@ const router = Router();
 const employeeSchema = z.object({
     name: z.string().min(1),
     email: z.string().email(),
+    mobile: z.string().optional(),
     department: z.string().optional(),
     avatar_url: z.string().url().optional(),
     organization_id: z.number(),
