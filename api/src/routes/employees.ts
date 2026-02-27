@@ -41,8 +41,18 @@ router.get('/:id', authenticate, roleGuard(['admin', 'manager']), async (req: Re
     return res.json({ employee: data });
 });
 
+import multer from 'multer';
+import { v2 as cloudinary } from 'cloudinary';
+
+const upload = multer({ storage: multer.memoryStorage() });
+
 // ── POST /api/employees ──────────────────────────────────────
-router.post('/', authenticate, roleGuard(['admin', 'manager']), async (req: Request, res: Response) => {
+router.post('/', authenticate, roleGuard(['admin', 'manager']), upload.single('avatar'), async (req: Request, res: Response) => {
+    // If sent as FormData, organization_id comes as a string, so we need to convert it before parsing
+    if (req.body.organization_id && typeof req.body.organization_id === 'string') {
+        req.body.organization_id = parseInt(req.body.organization_id, 10);
+    }
+
     const parsed = employeeSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -51,9 +61,33 @@ router.post('/', authenticate, roleGuard(['admin', 'manager']), async (req: Requ
         return res.status(403).json({ error: 'You can only add employees to your own organization' });
     }
 
+    let avatar_url = parsed.data.avatar_url;
+
+    // If there's a file attached via multipart, upload it to Cloudinary
+    if (req.file) {
+        try {
+            const uploadPromise = new Promise((resolve, reject) => {
+                const stream = cloudinary.uploader.upload_stream(
+                    { folder: 'avatars' },
+                    (error, result) => {
+                        if (error) reject(error);
+                        else resolve(result);
+                    }
+                );
+                stream.end(req.file!.buffer);
+            });
+
+            const result = await uploadPromise as any;
+            avatar_url = result.secure_url;
+        } catch (uploadError: any) {
+            console.error('Avatar upload error:', uploadError);
+            return res.status(500).json({ error: `Avatar upload failed: ${uploadError.message}` });
+        }
+    }
+
     const { data, error } = await supabaseAdmin
         .from('employees')
-        .insert(parsed.data)
+        .insert({ ...parsed.data, avatar_url })
         .select()
         .single();
 

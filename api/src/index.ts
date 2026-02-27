@@ -4,14 +4,13 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
 
+dotenv.config();
+
 import healthRouter from './routes/health';
 import authRouter from './routes/auth';
 import organizationsRouter from './routes/organizations';
 import employeesRouter from './routes/employees';
 import attendanceRouter from './routes/attendance';
-
-dotenv.config();
-
 const app = express();
 const PORT = process.env.PORT || 4000;
 

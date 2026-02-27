@@ -42,14 +42,43 @@ router.get('/:id', authenticate, roleGuard(['admin', 'manager']), async (req: Re
     return res.json({ organization: data });
 });
 
+import multer from 'multer';
+import { v2 as cloudinary } from 'cloudinary';
+
+const upload = multer({ storage: multer.memoryStorage() });
+
 // ── POST /api/organizations ──────────────────────────────────
-router.post('/', authenticate, roleGuard(['admin']), async (req: Request, res: Response) => {
+router.post('/', authenticate, roleGuard(['admin']), upload.single('logo'), async (req: Request, res: Response) => {
     const parsed = orgSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+    let logo_url = parsed.data.logo_url;
+
+    // If there's a file attached via multipart, upload it to Cloudinary
+    if (req.file) {
+        try {
+            const uploadPromise = new Promise((resolve, reject) => {
+                const stream = cloudinary.uploader.upload_stream(
+                    { folder: 'logos' },
+                    (error, result) => {
+                        if (error) reject(error);
+                        else resolve(result);
+                    }
+                );
+                stream.end(req.file!.buffer);
+            });
+
+            const result = await uploadPromise as any;
+            logo_url = result.secure_url;
+        } catch (uploadError: any) {
+            console.error('Logo upload error:', uploadError);
+            return res.status(500).json({ error: `Logo upload failed: ${uploadError.message}` });
+        }
+    }
+
     const { data, error } = await supabaseAdmin
         .from('organizations')
-        .insert({ ...parsed.data, created_by: req.user!.id })
+        .insert({ ...parsed.data, logo_url, created_by: req.user!.id })
         .select()
         .single();
 
