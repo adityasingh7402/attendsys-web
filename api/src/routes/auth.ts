@@ -2,13 +2,14 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { supabase, supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
+import jwt from 'jsonwebtoken';
 
 const router = Router();
 
 // ── Validation schemas ───────────────────────────────────────
 const loginSchema = z.object({
     email: z.string().email(),
-    password: z.string().min(6),
+    password: z.string().min(1), // Relaxed min to allow flexible passwords
 });
 
 const registerSchema = z.object({
@@ -27,27 +28,78 @@ router.post('/login', async (req: Request, res: Response) => {
 
     const { email, password } = parsed.data;
 
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (error || !data.user) {
-        return res.status(401).json({ error: error?.message || 'Invalid credentials' });
-    }
-
-    // Fetch role from profiles
-    const { data: profile } = await supabaseAdmin
+    // 1. Fetch user from our database to check role & mobile
+    const { data: profile, error: profileError } = await supabaseAdmin
         .from('profiles')
-        .select('role, organization_id, name')
-        .eq('id', data.user.id)
+        .select('id, role, organization_id, name, mobile')
+        .eq('email', email)
         .single();
 
+    // Fallback: Check employees table if not in profiles directly
+    let userRecord = profile;
+    if (!userRecord) {
+        const { data: employee } = await supabaseAdmin
+            .from('employees')
+            .select('user_id, role, organization_id, name, mobile')
+            .eq('email', email)
+            .single();
+
+        if (employee && employee.user_id) {
+            userRecord = { id: employee.user_id, ...employee };
+        }
+    }
+
+    if (!userRecord) {
+        return res.status(401).json({ error: 'User not found' });
+    }
+
+    let accessToken: string;
+    let userId = userRecord.id;
+
+    if (userRecord.role === 'admin') {
+        // Admin: Standard Supabase Auth password check
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error || !data.user) {
+            return res.status(401).json({ error: error?.message || 'Invalid admin credentials' });
+        }
+        accessToken = data.session.access_token;
+        userId = data.user.id;
+    } else {
+        // Employee/Manager: Custom password rule (Mobile + ADi or just Mobile)
+        const expectedPassword = userRecord.mobile ? `${userRecord.mobile}ADi` : null;
+        const fallbackPassword = userRecord.mobile ? userRecord.mobile : null; // "for employee it just there mobile no as password" as requested
+
+        if (!expectedPassword && !fallbackPassword) {
+            return res.status(401).json({ error: 'Mobile number not set for this account. Cannot login.' });
+        }
+
+        // Check if entered password matches the mobile+ADi combination OR just the mobile number.
+        if (password !== expectedPassword && password !== fallbackPassword) {
+            return res.status(401).json({ error: 'Invalid password. Use your mobile number or mobile number + ADi.' });
+        }
+
+        // Generate custom JWT since we bypassed Supabase Auth
+        const jwtSecret = process.env.JWT_SECRET || 'super-secret-key-change-in-production';
+        accessToken = jwt.sign(
+            {
+                sub: userId,
+                email: email,
+                role: userRecord.role,
+                organization_id: userRecord.organization_id
+            },
+            jwtSecret,
+            { expiresIn: '7d' }
+        );
+    }
+
     return res.json({
-        token: data.session.access_token,
+        token: accessToken,
         user: {
-            id: data.user.id,
-            email: data.user.email,
-            name: profile?.name,
-            role: profile?.role,
-            organization_id: profile?.organization_id,
+            id: userId,
+            email: email,
+            name: userRecord.name,
+            role: userRecord.role,
+            organization_id: userRecord.organization_id,
         },
     });
 });
