@@ -11,6 +11,7 @@ const employeeSchema = z.object({
     email: z.string().email(),
     mobile: z.string().optional(),
     department: z.string().optional(),
+    role: z.string().optional(),
     avatar_url: z.string().url().optional(),
     organization_id: z.number(),
     user_id: z.string().uuid().optional(),
@@ -85,10 +86,36 @@ router.post('/', authenticate, roleGuard(['admin', 'manager']), upload.single('a
             return res.status(500).json({ error: `Avatar upload failed: ${uploadError.message}` });
         }
     }
+    // Auto-create a Supabase Auth User so the employee can actually log in eventually
+    let authUserId: string | undefined;
+    try {
+        const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+            email: parsed.data.email,
+            password: 'Attendance123!', // Secure default password
+            email_confirm: true,
+            user_metadata: {
+                name: parsed.data.name,
+                role: parsed.data.role || 'employee',
+                organization_id: parsed.data.organization_id
+            }
+        });
+
+        if (authError) {
+            return res.status(400).json({ error: `Failed to create auth user: ${authError.message}. Make sure email isn't already used.` });
+        }
+
+        authUserId = authData.user.id;
+    } catch (e: any) {
+        return res.status(500).json({ error: `Failed to create auth user: ${e.message}` });
+    }
 
     const { data, error } = await supabaseAdmin
         .from('employees')
-        .insert({ ...parsed.data, avatar_url })
+        .insert({
+            ...parsed.data,
+            avatar_url,
+            user_id: authUserId
+        })
         .select()
         .single();
 
