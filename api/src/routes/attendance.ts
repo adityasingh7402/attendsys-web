@@ -59,24 +59,43 @@ router.post('/checkin', authenticate, async (req: Request, res: Response) => {
     // Check for existing record today
     const { data: existing } = await supabaseAdmin
         .from('attendance_records')
-        .select('id, check_in, check_out')
+        .select('id, check_in, check_out, is_absent')
         .eq('employee_id', parsed.data.employee_id)
         .eq('date', today)
         .single();
 
     if (existing) {
-        return res.status(409).json({
-            error: 'Already checked in today',
-            record: existing,
-        });
+        if (existing.check_in) {
+            return res.status(409).json({
+                error: 'Already checked in today',
+                record: existing,
+            });
+        }
+
+        // If they exist but check_in is null, they were marked absent. Update the record.
+        const { data, error } = await supabaseAdmin
+            .from('attendance_records')
+            .update({
+                check_in: checkIn,
+                is_absent: false,
+                is_synced: true,
+            })
+            .eq('id', existing.id)
+            .select()
+            .single();
+
+        if (error) return res.status(500).json({ error: error.message });
+        return res.status(200).json({ record: data });
     }
 
+    // Insert new record
     const { data, error } = await supabaseAdmin
         .from('attendance_records')
         .insert({
             employee_id: parsed.data.employee_id,
             date: today,
             check_in: checkIn,
+            is_absent: false,
             is_synced: true,
         })
         .select()
@@ -141,6 +160,7 @@ router.get('/summary', authenticate, roleGuard(['admin', 'manager']), async (req
         .from('attendance_records')
         .select('id')
         .eq('date', today)
+        .eq('is_absent', false)
         .in('employee_id', employees?.map(e => e.id) || []);
 
     const totalPresent = presentToday?.length || 0;
