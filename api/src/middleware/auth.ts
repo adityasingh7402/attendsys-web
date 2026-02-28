@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin } from '../config/supabase';
+import jwt from 'jsonwebtoken';
 
 export interface AuthUser {
     id: string;
@@ -25,9 +26,44 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     }
 
     const token = authHeader.split(' ')[1];
+    const jwtSecret = process.env.JWT_SECRET || 'super-secret-key-change-in-production';
 
     try {
-        // Verify token against Supabase — returns the user if valid
+        // First: try verifying as a custom JWT (for managers/employees)
+        try {
+            const decoded = jwt.verify(token, jwtSecret) as {
+                sub: string;
+                email: string;
+                role: 'admin' | 'manager' | 'employee';
+                organization_id?: number;
+            };
+
+            // Custom JWT verified — set req.user directly from token payload
+            req.user = {
+                id: decoded.sub,
+                email: decoded.email,
+                role: decoded.role,
+                organization_id: decoded.organization_id,
+            };
+
+            // If org_id is missing from token, try fetching from employees table
+            if (!req.user.organization_id && req.user.role !== 'admin') {
+                const { data: emp } = await supabaseAdmin
+                    .from('employees')
+                    .select('organization_id')
+                    .eq('email', decoded.email)
+                    .single();
+                if (emp?.organization_id) {
+                    req.user.organization_id = emp.organization_id;
+                }
+            }
+
+            return next();
+        } catch {
+            // Not a valid custom JWT — fall through to Supabase verification
+        }
+
+        // Second: try verifying as a Supabase token (for admins)
         const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
 
         if (error || !user) {
