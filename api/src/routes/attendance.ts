@@ -149,7 +149,8 @@ router.get('/summary', authenticate, roleGuard(['admin', 'manager']), async (req
     const today = new Date().toISOString().split('T')[0];
 
     let employeeQuery = supabaseAdmin.from('employees').select('id');
-    const orgId = req.query.organization_id || (req.user?.role === 'manager' ? req.user.organization_id : null);
+    const queryOrgId = req.query.organization_id === 'null' ? null : req.query.organization_id;
+    const orgId = queryOrgId || (req.user?.role === 'manager' ? req.user.organization_id : null);
     if (orgId) {
         employeeQuery = employeeQuery.eq('organization_id', orgId);
     }
@@ -182,7 +183,8 @@ router.get('/daily', authenticate, roleGuard(['admin', 'manager']), async (req: 
 
     // 1. Fetch all employees (filter by org if manager or explicitly requested)
     let employeeQuery = supabaseAdmin.from('employees').select('id, name, department, role');
-    const orgId = req.query.organization_id || (req.user?.role === 'manager' ? req.user.organization_id : null);
+    const queryOrgId = req.query.organization_id === 'null' ? null : req.query.organization_id;
+    const orgId = queryOrgId || (req.user?.role === 'manager' ? req.user.organization_id : null);
     if (orgId) {
         employeeQuery = employeeQuery.eq('organization_id', orgId);
     }
@@ -216,12 +218,14 @@ router.get('/daily', authenticate, roleGuard(['admin', 'manager']), async (req: 
             record: record || null
         };
 
-        // If there's a record and they aren't marked explicitly absent, they are present
+        // Only put them in present if they have a record and are NOT absent
         if (record && !record.is_absent) {
             present.push(empData);
-        } else {
+        } else if (record && record.is_absent) {
+            // Only put them in absent if they have a record and ARE explicitly absent
             absent.push(empData);
         }
+        // If there is no record at all, they do not appear in either list (Not Checked In Yet)
     }
 
     // Sort present by check_in time descending (most recent first)
