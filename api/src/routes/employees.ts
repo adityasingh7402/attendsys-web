@@ -31,6 +31,18 @@ router.get('/', authenticate, roleGuard(['admin', 'manager']), async (req: Reque
     return res.json({ employees: data });
 });
 
+// ── GET /api/employees/me ──────────────────────────────────
+router.get('/me', authenticate, async (req: Request, res: Response) => {
+    const { data, error } = await supabaseAdmin
+        .from('employees')
+        .select('id, name, email, department, organization_id, avatar_url')
+        .eq('user_id', req.user!.id)
+        .single();
+
+    if (error || !data) return res.status(404).json({ error: 'Employee record not found' });
+    return res.json({ employee: data });
+});
+
 // ── GET /api/employees/:id ───────────────────────────────────
 router.get('/:id', authenticate, roleGuard(['admin', 'manager']), async (req: Request, res: Response) => {
     const { data, error } = await supabaseAdmin
