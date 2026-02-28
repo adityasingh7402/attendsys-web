@@ -56,15 +56,15 @@ router.post('/login', async (req: Request, res: Response) => {
         if (employee && employee.user_id) {
             userRecord = { id: employee.user_id, ...employee };
         }
-    } else if (!userRecord.mobile) {
-        // Profile found but has no mobile — try fetching it from employees table
+    } else if (!userRecord.mobile || !userRecord.organization_id) {
+        // Profile found but missing mobile or org — fetch both from employees table
         const { data: employee } = await supabaseAdmin
             .from('employees')
             .select('mobile, organization_id')
             .eq('email', email)
             .single();
 
-        if (employee?.mobile) {
+        if (employee?.mobile && !userRecord.mobile) {
             userRecord = { ...userRecord, mobile: employee.mobile };
         }
         if (employee?.organization_id && !userRecord.organization_id) {
