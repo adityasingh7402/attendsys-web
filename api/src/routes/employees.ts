@@ -55,8 +55,15 @@ router.post('/', authenticate, roleGuard(['admin', 'manager']), upload.single('a
         req.body.organization_id = parseInt(req.body.organization_id, 10);
     }
 
+    console.log("INCOMING BODY:", req.body);
+
     const parsed = employeeSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) {
+        console.error("VALIDATION ERROR:", parsed.error.flatten());
+        return res.status(400).json({ error: parsed.error.flatten() });
+    }
+
+    console.log("PARSED DATA:", parsed.data);
 
     // Managers can only add to their own org
     if (req.user?.role === 'manager' && parsed.data.organization_id !== req.user.organization_id) {
