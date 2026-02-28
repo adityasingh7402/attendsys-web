@@ -167,13 +167,25 @@ router.post('/assign-manager', authenticate, roleGuard(['admin']), async (req: R
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    // Update the profile role to manager and assign org
-    const { error } = await supabaseAdmin
+    // Update the profiles table role to manager and assign org
+    const { error: profileError } = await supabaseAdmin
         .from('profiles')
         .update({ role: 'manager', organization_id: parsed.data.organization_id })
         .eq('id', parsed.data.user_id);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (profileError) return res.status(500).json({ error: profileError.message });
+
+    // Also update the employees table so the role is consistent everywhere
+    const { error: employeeError } = await supabaseAdmin
+        .from('employees')
+        .update({ role: 'manager', organization_id: parsed.data.organization_id })
+        .eq('user_id', parsed.data.user_id);
+
+    if (employeeError) {
+        console.warn('Could not update employees table role:', employeeError.message);
+        // Non-fatal: profiles was updated, log and continue
+    }
+
     return res.json({ message: 'Manager assigned successfully' });
 });
 
