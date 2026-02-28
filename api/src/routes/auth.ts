@@ -36,14 +36,22 @@ router.post('/login', async (req: Request, res: Response) => {
         .eq('email', email)
         .single();
 
+    if (profileError && profileError.code !== 'PGRST116') {
+        console.error("Supabase Profile Error:", profileError);
+    }
+
     // Fallback: Check employees table if not in profiles directly
     let userRecord = profile;
     if (!userRecord) {
-        const { data: employee } = await supabaseAdmin
+        const { data: employee, error: empError } = await supabaseAdmin
             .from('employees')
             .select('user_id, role, organization_id, name, mobile')
             .eq('email', email)
             .single();
+
+        if (empError && empError.code !== 'PGRST116') {
+            console.error("Supabase Employee Error:", empError);
+        }
 
         if (employee && employee.user_id) {
             userRecord = { id: employee.user_id, ...employee };
@@ -51,6 +59,7 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 
     if (!userRecord) {
+        console.log(`Login failed: User not found for email ${email}`);
         return res.status(401).json({ error: 'User not found' });
     }
 

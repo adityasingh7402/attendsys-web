@@ -149,8 +149,9 @@ router.get('/summary', authenticate, roleGuard(['admin', 'manager']), async (req
     const today = new Date().toISOString().split('T')[0];
 
     let employeeQuery = supabaseAdmin.from('employees').select('id');
-    if (req.user?.role === 'manager' && req.user.organization_id) {
-        employeeQuery = employeeQuery.eq('organization_id', req.user.organization_id);
+    const orgId = req.query.organization_id || (req.user?.role === 'manager' ? req.user.organization_id : null);
+    if (orgId) {
+        employeeQuery = employeeQuery.eq('organization_id', orgId);
     }
 
     const { data: employees } = await employeeQuery;
