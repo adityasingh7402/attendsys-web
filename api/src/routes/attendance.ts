@@ -155,6 +155,65 @@ router.get('/summary', authenticate, roleGuard(['admin', 'manager']), async (req
     });
 });
 
+// ── GET /api/attendance/daily ────────────────────────────────
+router.get('/daily', authenticate, roleGuard(['admin', 'manager']), async (req: Request, res: Response) => {
+    const today = new Date().toISOString().split('T')[0];
+
+    // 1. Fetch all employees (filter by org if manager or explicitly requested)
+    let employeeQuery = supabaseAdmin.from('employees').select('id, name, department, profile_picture_url, role');
+    const orgId = req.query.organization_id || (req.user?.role === 'manager' ? req.user.organization_id : null);
+    if (orgId) {
+        employeeQuery = employeeQuery.eq('organization_id', orgId);
+    }
+
+    const { data: employees, error: empErr } = await employeeQuery;
+    if (empErr) return res.status(500).json({ error: empErr.message });
+
+    if (!employees || employees.length === 0) {
+        return res.json({ present: [], absent: [] });
+    }
+
+    // 2. Fetch today's records for these employees
+    const { data: records, error: recErr } = await supabaseAdmin
+        .from('attendance_records')
+        .select('*')
+        .eq('date', today)
+        .in('employee_id', employees.map(e => e.id));
+
+    if (recErr) return res.status(500).json({ error: recErr.message });
+
+    // 3. Map into Present vs Absent
+    const present: any[] = [];
+    const absent: any[] = [];
+
+    for (const emp of employees) {
+        const record = records?.find(r => r.employee_id === emp.id);
+        const empData = {
+            id: emp.id,
+            name: emp.name,
+            department: emp.department,
+            profile_picture_url: emp.profile_picture_url,
+            record: record || null
+        };
+
+        // If there's a record and they aren't marked explicitly absent, they are present
+        if (record && !record.is_absent) {
+            present.push(empData);
+        } else {
+            absent.push(empData);
+        }
+    }
+
+    // Sort present by check_in time descending (most recent first)
+    present.sort((a, b) => {
+        if (!a.record?.check_in) return 1;
+        if (!b.record?.check_in) return -1;
+        return new Date(b.record.check_in).getTime() - new Date(a.record.check_in).getTime();
+    });
+
+    return res.json({ present, absent });
+});
+
 // ── POST /api/attendance/absent ──────────────────────────────
 router.post('/absent', authenticate, roleGuard(['admin', 'manager']), async (req: Request, res: Response) => {
     const schema = z.object({
