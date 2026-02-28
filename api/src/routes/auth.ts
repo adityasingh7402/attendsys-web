@@ -10,6 +10,7 @@ const router = Router();
 const loginSchema = z.object({
     email: z.string().email(),
     password: z.string().min(1), // Relaxed min to allow flexible passwords
+    loginType: z.enum(['admin', 'employee']).default('employee'),
 });
 
 const registerSchema = z.object({
@@ -26,7 +27,7 @@ router.post('/login', async (req: Request, res: Response) => {
         return res.status(400).json({ error: parsed.error.flatten() });
     }
 
-    const { email, password } = parsed.data;
+    const { email, password, loginType } = parsed.data;
 
     // 1. Fetch user from our database to check role & mobile
     const { data: profile, error: profileError } = await supabaseAdmin
@@ -56,7 +57,16 @@ router.post('/login', async (req: Request, res: Response) => {
     let accessToken: string;
     let userId = userRecord.id;
 
-    if (userRecord.role === 'admin') {
+    // Verify the requested login method matches their actual role
+    const isActuallyAdmin = userRecord.role === 'admin';
+    if (loginType === 'admin' && !isActuallyAdmin) {
+        return res.status(403).json({ error: 'This account does not have Admin privileges.' });
+    }
+    if (loginType === 'employee' && isActuallyAdmin) {
+        return res.status(403).json({ error: 'Admin accounts must use the Admin login tab.' });
+    }
+
+    if (isActuallyAdmin) {
         // Admin: Standard Supabase Auth password check
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error || !data.user) {
