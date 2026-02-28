@@ -155,4 +155,43 @@ router.get('/summary', authenticate, roleGuard(['admin', 'manager']), async (req
     });
 });
 
+// ── POST /api/attendance/absent ──────────────────────────────
+router.post('/absent', authenticate, roleGuard(['admin', 'manager']), async (req: Request, res: Response) => {
+    const schema = z.object({
+        employee_id: z.number(),
+        date: z.string().optional(), // defaults to today
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const date = parsed.data.date || new Date().toISOString().split('T')[0];
+
+    // Check for existing record
+    const { data: existing } = await supabaseAdmin
+        .from('attendance_records')
+        .select('id, check_in, check_out, is_absent')
+        .eq('employee_id', parsed.data.employee_id)
+        .eq('date', date)
+        .single();
+
+    if (existing) {
+        return res.status(409).json({ error: 'Attendance record already exists for today', record: existing });
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('attendance_records')
+        .insert({
+            employee_id: parsed.data.employee_id,
+            date,
+            is_absent: true,
+            is_synced: true,
+        })
+        .select()
+        .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.status(201).json({ record: data });
+});
+
 export default router;
