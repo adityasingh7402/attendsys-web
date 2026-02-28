@@ -43,6 +43,37 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     return res.json({ records: data });
 });
 
+// ── GET /api/attendance/my-today ─────────────────────────────
+// Returns the current logged-in user's attendance record for today (or a specific date)
+router.get('/my-today', authenticate, async (req: Request, res: Response) => {
+    const dateParam = req.query.date as string | undefined;
+    const targetDate = dateParam || new Date().toISOString().split('T')[0];
+
+    // Look up the employee record for the current user
+    const { data: emp, error: empErr } = await supabaseAdmin
+        .from('employees')
+        .select('id, name, department')
+        .eq('user_id', req.user!.id)
+        .single();
+
+    if (empErr || !emp) {
+        return res.status(404).json({ error: 'Employee record not found for this user' });
+    }
+
+    // Fetch attendance record for the given date
+    const { data: record } = await supabaseAdmin
+        .from('attendance_records')
+        .select('*')
+        .eq('employee_id', emp.id)
+        .eq('date', targetDate)
+        .maybeSingle();
+
+    return res.json({
+        employee: emp,
+        record: record || null,
+    });
+});
+
 // ── POST /api/attendance/checkin ─────────────────────────────
 router.post('/checkin', authenticate, async (req: Request, res: Response) => {
     const schema = z.object({
