@@ -181,7 +181,7 @@ router.get('/daily', authenticate, roleGuard(['admin', 'manager']), async (req: 
     const today = new Date().toISOString().split('T')[0];
 
     // 1. Fetch all employees (filter by org if manager or explicitly requested)
-    let employeeQuery = supabaseAdmin.from('employees').select('id, name, department, profile_picture_url, role');
+    let employeeQuery = supabaseAdmin.from('employees').select('id, name, department, role');
     const orgId = req.query.organization_id || (req.user?.role === 'manager' ? req.user.organization_id : null);
     if (orgId) {
         employeeQuery = employeeQuery.eq('organization_id', orgId);
@@ -213,7 +213,6 @@ router.get('/daily', authenticate, roleGuard(['admin', 'manager']), async (req: 
             id: emp.id,
             name: emp.name,
             department: emp.department,
-            profile_picture_url: emp.profile_picture_url,
             record: record || null
         };
 
