@@ -24,6 +24,12 @@ router.get('/', authenticate, roleGuard(['admin', 'manager']), async (req: Reque
     // Managers only see their own org's employees
     if (req.user?.role === 'manager' && req.user.organization_id) {
         query = query.eq('organization_id', req.user.organization_id);
+    } else if (req.user?.role === 'admin') {
+        // Admins can optionally filter by organization_id query param
+        const queryOrgId = req.query.organization_id === 'null' ? null : req.query.organization_id;
+        if (queryOrgId) {
+            query = query.eq('organization_id', queryOrgId);
+        }
     }
 
     const { data, error } = await query.order('created_at', { ascending: false });
