@@ -100,13 +100,12 @@ router.post('/login', async (req: Request, res: Response) => {
     } else {
         // Employee/Manager: Custom password rule (Mobile + ADi or just Mobile)
         const expectedPassword = userRecord.mobile ? `${userRecord.mobile}ADi` : null;
-        const fallbackPassword = userRecord.mobile ? userRecord.mobile : null; // "for employee it just there mobile no as password" as requested
+        const fallbackPassword = userRecord.mobile ? userRecord.mobile : null;
 
         if (!expectedPassword && !fallbackPassword) {
             return res.status(401).json({ error: 'Mobile number not set for this account. Cannot login.' });
         }
 
-        // Check if entered password matches the mobile+ADi combination OR just the mobile number.
         if (password !== expectedPassword && password !== fallbackPassword) {
             return res.status(401).json({ error: 'Invalid password. Use your mobile number or mobile number + ADi.' });
         }
@@ -117,6 +116,7 @@ router.post('/login', async (req: Request, res: Response) => {
             {
                 sub: userId,
                 email: email,
+                name: userRecord.name,          // include name so /auth/me has it from token too
                 role: userRecord.role,
                 organization_id: userRecord.organization_id
             },
@@ -177,8 +177,62 @@ router.post('/register', authenticate, async (req: Request, res: Response) => {
 });
 
 // ── GET /api/auth/me ─────────────────────────────────────────
-router.get('/me', authenticate, (req: Request, res: Response) => {
-    return res.json({ user: req.user });
+// Returns full user profile by querying the RIGHT table based on role:
+//   admin            → profiles  (they live in Supabase Auth / profiles)
+//   manager/employee → employees (they were added manually by admin)
+router.get('/me', authenticate, async (req: Request, res: Response) => {
+    const user = req.user!;
+
+    try {
+        if (user.role === 'admin') {
+            // Admins: fetch from profiles table
+            const { data, error } = await supabaseAdmin
+                .from('profiles')
+                .select('id, name, email, role, organization_id')
+                .eq('id', user.id)
+                .single();
+
+            if (error || !data) {
+                return res.status(404).json({ error: 'Profile not found' });
+            }
+
+            return res.json({
+                user: {
+                    id: data.id,
+                    name: data.name,
+                    email: data.email,
+                    role: data.role,
+                    organization_id: data.organization_id,
+                }
+            });
+        } else {
+            // Managers & Employees: fetch from employees table
+            const { data, error } = await supabaseAdmin
+                .from('employees')
+                .select('id, name, email, role, organization_id, department, mobile')
+                .eq('email', user.email)
+                .single();
+
+            if (error || !data) {
+                return res.status(404).json({ error: 'Employee record not found' });
+            }
+
+            return res.json({
+                user: {
+                    id: user.id,                        // use auth id (sub from JWT)
+                    name: data.name,
+                    email: data.email,
+                    role: data.role,
+                    organization_id: data.organization_id,
+                    department: data.department,
+                    mobile: data.mobile,
+                }
+            });
+        }
+    } catch (e) {
+        console.error('[/auth/me]', e);
+        return res.status(500).json({ error: 'Failed to fetch user profile' });
+    }
 });
 
 export default router;

@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 export interface AuthUser {
     id: string;
     email: string;
+    name?: string;
     role: 'admin' | 'manager' | 'employee';
     organization_id?: number;
 }
@@ -34,6 +35,7 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
             const decoded = jwt.verify(token, jwtSecret) as {
                 sub: string;
                 email: string;
+                name?: string;
                 role: 'admin' | 'manager' | 'employee';
                 organization_id?: number;
             };
@@ -42,19 +44,32 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
             req.user = {
                 id: decoded.sub,
                 email: decoded.email,
+                name: decoded.name,
                 role: decoded.role,
                 organization_id: decoded.organization_id,
             };
 
-            // If org_id is missing from token, try fetching from employees table
-            if (!req.user.organization_id && req.user.role !== 'admin') {
+            // If name or org_id is missing from token, fetch from DB
+            if (!req.user.name || !req.user.organization_id) {
                 const { data: emp } = await supabaseAdmin
                     .from('employees')
-                    .select('organization_id')
+                    .select('name, organization_id')
                     .eq('email', decoded.email)
                     .single();
-                if (emp?.organization_id) {
-                    req.user.organization_id = emp.organization_id;
+                if (emp) {
+                    if (!req.user.name && emp.name) req.user.name = emp.name;
+                    if (!req.user.organization_id && emp.organization_id) {
+                        req.user.organization_id = emp.organization_id;
+                    }
+                }
+                // Fallback: try profiles table for name
+                if (!req.user.name) {
+                    const { data: prof } = await supabaseAdmin
+                        .from('profiles')
+                        .select('name')
+                        .eq('id', decoded.sub)
+                        .single();
+                    if (prof?.name) req.user.name = prof.name;
                 }
             }
 
@@ -70,10 +85,10 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
             return res.status(401).json({ error: 'Invalid or expired token' });
         }
 
-        // Fetch the user's profile to get their role and org
+        // Fetch the user's profile to get their role, org and name
         const { data: profile, error: profileError } = await supabaseAdmin
             .from('profiles')
-            .select('role, organization_id')
+            .select('role, organization_id, name')
             .eq('id', user.id)
             .single();
 
@@ -84,6 +99,7 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
         req.user = {
             id: user.id,
             email: user.email!,
+            name: profile.name,
             role: profile.role,
             organization_id: profile.organization_id,
         };
