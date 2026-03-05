@@ -178,23 +178,24 @@ router.post('/checkout', authenticate, async (req: Request, res: Response) => {
 // ── GET /api/attendance/summary ───────────────────────────────
 router.get('/summary', authenticate, roleGuard(['admin', 'manager']), async (req: Request, res: Response) => {
     const today = new Date().toISOString().split('T')[0];
-
-    let employeeQuery = supabaseAdmin.from('employees').select('id');
     const queryOrgId = req.query.organization_id === 'null' ? null : req.query.organization_id;
     const orgId = queryOrgId || (req.user?.role === 'manager' ? req.user.organization_id : null);
-    if (orgId) {
-        employeeQuery = employeeQuery.eq('organization_id', orgId);
-    }
 
+    let employeeQuery = supabaseAdmin.from('employees').select('id');
+    if (orgId) employeeQuery = employeeQuery.eq('organization_id', orgId);
+
+    // Fetch employees first (need IDs), then attendnace in parallel is impossible without IDs
+    // so we run the employee query, then build a parallel attendance lookup.
     const { data: employees } = await employeeQuery;
-    const totalEmployees = employees?.length || 0;
+    const empIds = employees?.map(e => e.id) || [];
+    const totalEmployees = empIds.length;
 
     const { data: presentToday } = await supabaseAdmin
         .from('attendance_records')
         .select('id')
         .eq('date', today)
         .eq('is_absent', false)
-        .in('employee_id', employees?.map(e => e.id) || []);
+        .in('employee_id', empIds);
 
     const totalPresent = presentToday?.length || 0;
     const percentage = totalEmployees > 0 ? Math.round((totalPresent / totalEmployees) * 100) : 0;
@@ -211,23 +212,16 @@ router.get('/summary', authenticate, roleGuard(['admin', 'manager']), async (req
 // ── GET /api/attendance/daily ────────────────────────────────
 router.get('/daily', authenticate, roleGuard(['admin', 'manager']), async (req: Request, res: Response) => {
     const today = new Date().toISOString().split('T')[0];
-
-    // 1. Fetch all employees (filter by org if manager or explicitly requested)
-    let employeeQuery = supabaseAdmin.from('employees').select('id, name, department, role');
     const queryOrgId = req.query.organization_id === 'null' ? null : req.query.organization_id;
     const orgId = queryOrgId || (req.user?.role === 'manager' ? req.user.organization_id : null);
-    if (orgId) {
-        employeeQuery = employeeQuery.eq('organization_id', orgId);
-    }
+
+    let employeeQuery = supabaseAdmin.from('employees').select('id, name, department, role');
+    if (orgId) employeeQuery = employeeQuery.eq('organization_id', orgId);
 
     const { data: employees, error: empErr } = await employeeQuery;
     if (empErr) return res.status(500).json({ error: empErr.message });
+    if (!employees || employees.length === 0) return res.json({ present: [], absent: [] });
 
-    if (!employees || employees.length === 0) {
-        return res.json({ present: [], absent: [] });
-    }
-
-    // 2. Fetch today's records for these employees
     const { data: records, error: recErr } = await supabaseAdmin
         .from('attendance_records')
         .select('*')
@@ -236,30 +230,16 @@ router.get('/daily', authenticate, roleGuard(['admin', 'manager']), async (req: 
 
     if (recErr) return res.status(500).json({ error: recErr.message });
 
-    // 3. Map into Present vs Absent
     const present: any[] = [];
     const absent: any[] = [];
 
     for (const emp of employees) {
         const record = records?.find(r => r.employee_id === emp.id);
-        const empData = {
-            id: emp.id,
-            name: emp.name,
-            department: emp.department,
-            record: record || null
-        };
-
-        // Only put them in present if they have a record and are NOT absent
-        if (record && !record.is_absent) {
-            present.push(empData);
-        } else if (record && record.is_absent) {
-            // Only put them in absent if they have a record and ARE explicitly absent
-            absent.push(empData);
-        }
-        // If there is no record at all, they do not appear in either list (Not Checked In Yet)
+        const empData = { id: emp.id, name: emp.name, department: emp.department, record: record || null };
+        if (record && !record.is_absent) present.push(empData);
+        else if (record && record.is_absent) absent.push(empData);
     }
 
-    // Sort present by check_in time descending (most recent first)
     present.sort((a, b) => {
         if (!a.record?.check_in) return 1;
         if (!b.record?.check_in) return -1;
